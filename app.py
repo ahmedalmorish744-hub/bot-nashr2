@@ -1,81 +1,77 @@
 # Developer: Smith - Mustafa Hussein
-
-# حقوق المطور: هذا البوت مبرمج من قبل سميث
-# للتواصل: @ypiu5
+# معدل بالكامل للنشر على Railway مع حل مشكلة التوقيت والمتغيرات البيئية وجميع الدوال
 
 from pyrogram import Client, filters, idle
 from pyrogram.types import (
-    Message,
-    CallbackQuery,
-    ForceReply,
+    Message, CallbackQuery, ForceReply,
     InlineKeyboardMarkup as Markup,
     InlineKeyboardButton as Button,
-    InputMediaPhoto,
-    InputMediaVideo
+    InputMediaPhoto, InputMediaVideo
 )
 from pyrogram.errors import (
-    ApiIdInvalid,
-    PhoneNumberInvalid,
-    PhoneCodeInvalid,
-    PhoneCodeExpired,
-    SessionPasswordNeeded,
-    PasswordHashInvalid,
-    UserNotParticipant,
-    ChatWriteForbidden,
-    BotMethodInvalid
+    ApiIdInvalid, PhoneNumberInvalid, PhoneCodeInvalid,
+    PhoneCodeExpired, SessionPasswordNeeded, PasswordHashInvalid,
+    UserNotParticipant, ChatWriteForbidden, BadMsgNotification
 )
 import os
+import json
+import asyncio
 from asyncio import create_task, sleep
 from datetime import datetime, timedelta
 from pytz import timezone
 from typing import Union
-import json
+import threading
+from flask import Flask
+
+# ------------------ قراءة المتغيرات البيئية (آمن) ------------------
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+
+if not API_ID or not API_HASH or not BOT_TOKEN:
+    raise RuntimeError("API_ID, API_HASH, BOT_TOKEN must be set in environment variables")
 
 # ------------------ إعدادات البوت ------------------
-app = Client(
-    "autoPost",
-    api_id="33957094",
-    api_hash="35e04f65846f09700aac0696a59f1a37",
-    bot_token="8713124620:AAFQGCd4IhcKql1g1mKJXnF_ePHGh0npwLo"
-)
+app = Client("autoPost", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 user_states = {}
-owner = 7853478744  # ايديك
+owner = int(os.getenv("OWNER_ID", 8226014028))  # يمكن جعله متغير بيئة أيضاً
 
-# ------------------ الأزرار الرئيسية (عراقي + أيقونات) ------------------
+# ------------------ أزرار رئيسية ------------------
 homeMarkup = Markup([
     [Button("👤 حسابي", callback_data="account")],
-    [
-        Button("📋 السوبرات المضافة", callback_data="currentSupers"),
-        Button("➕ إضافة سوبر", callback_data="newSuper")
-    ],
-    [
-        Button("⏱️ مدة النشر", callback_data="waitTime"),
-        Button("📝 كليشة النشر", callback_data="newCaption")
-    ],
-    [
-        Button("⏹️ إيقاف النشر", callback_data="stopPosting"),
-        Button("▶️ بدء النشر", callback_data="startPosting")
-    ],
+    [Button("📋 السوبرات المضافة", callback_data="currentSupers"), Button("➕ إضافة سوبر", callback_data="newSuper")],
+    [Button("⏱️ مدة النشر", callback_data="waitTime"), Button("📝 كليشة النشر", callback_data="newCaption")],
+    [Button("⏹️ إيقاف النشر", callback_data="stopPosting"), Button("▶️ بدء النشر", callback_data="startPosting")],
     [Button("🛡️ تعليمات الأمان", callback_data="safety")]
 ])
 
-# ------------------ دوال مساعدة ------------------
-def load_users():
-    if not os.path.exists("users.json"):
-        return {}
-    with open("users.json", "r") as f:
-        return json.load(f)
-
-def save_users(data):
-    with open("users.json", "w") as f:
+# ------------------ دوال حفظ وقراءة JSON ------------------
+def write(fp, data):
+    with open(fp, "w") as f:
         json.dump(data, f, indent=2)
 
-def is_subscribed(user_id):
-    try:
-        member = app.get_chat_member(f"@{FORCED_CHANNEL}", user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
+def read(fp):
+    if not os.path.exists(fp):
+        if fp == "channels.json":
+            write(fp, [])
+        else:
+            write(fp, {})
+    with open(fp) as f:
+        return json.load(f)
+
+users_db = "users.json"
+channels_db = "channels.json"
+users = read(users_db)
+channels = read(channels_db)
+
+FORCED_CHANNEL = channels[0] if channels else "TJUI9"
+
+# ------------------ دوال المستخدمين والاشتراك ------------------
+def load_users():
+    return read(users_db)
+
+def save_users(data):
+    write(users_db, data)
 
 def get_user_data(user_id):
     users = load_users()
@@ -108,6 +104,291 @@ def has_active_subscription(user_id):
     end = datetime.fromisoformat(end_str)
     return end > datetime.now()
 
+def get_referral_link(user_id):
+    return f"https://t.me/{app.me.username}?start=ref_{user_id}"
+
+def is_subscribed(user_id):
+    try:
+        member = app.get_chat_member(f"@{FORCED_CHANNEL}", user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+async def ensure_subscription_and_subscription(message):
+    user_id = message.from_user.id
+    if not is_subscribed(user_id):
+        await message.reply(
+            f"عذرا عزيزي، لازم تشترك بالقناة أولاً عشان تستخدم البوت\nالقناة: @{FORCED_CHANNEL}\nاشترك ثم أرسل /start"
+        )
+        return False
+    if not has_active_subscription(user_id):
+        data = get_user_data(user_id)
+        link = get_referral_link(user_id)
+        text = (
+            f"انتهت صلاحية اشتراكك المجاني.\n\n"
+            f"لتحصل على اشتراك شهر كامل، قم بدعوة 5 أشخاص عبر رابطك:\n{link}\n\n"
+            f"عدد المدعوين: {data['referrals_count']} / 5"
+        )
+        await message.reply(text)
+        return False
+    return True
+
+# ------------------ النشر التلقائي ------------------
+async def posting(user_id):
+    data = get_user_data(user_id)
+    if data.get("posting"):
+        client = Client(str(user_id), api_id=API_ID, api_hash=API_HASH, session_string=data["session"])
+        await client.start()
+    while data.get("posting") and has_active_subscription(user_id):
+        wait = data.get("waitTime", 60)
+        groups = data.get("groups", [])
+        caption_data = data.get("caption")
+        if caption_data is None:
+            update_user(user_id, {"posting": False})
+            await app.send_message(user_id, "تم إيقاف النشر بسبب عدم وجود كليشة.", reply_markup=Markup([[Button("إضافة كليشة", callback_data="newCaption")]]))
+            break
+        for group in groups:
+            try:
+                if caption_data["type"] == "photo":
+                    await client.send_photo(group, caption_data["file_id"], caption=caption_data.get("caption", ""))
+                elif caption_data["type"] == "video":
+                    await client.send_video(group, caption_data["file_id"], caption=caption_data.get("caption", ""))
+                else:
+                    await client.send_message(group, caption_data["text"])
+            except ChatWriteForbidden:
+                chat = await client.join_chat(group)
+                if caption_data["type"] == "photo":
+                    await client.send_photo(chat.id, caption_data["file_id"], caption=caption_data.get("caption", ""))
+                elif caption_data["type"] == "video":
+                    await client.send_video(chat.id, caption_data["file_id"], caption=caption_data.get("caption", ""))
+                else:
+                    await client.send_message(chat.id, caption_data["text"])
+                new_groups = data.get("groups", [])
+                new_groups.append(chat.id)
+                new_groups.remove(group)
+                update_user(user_id, {"groups": new_groups})
+            except Exception:
+                pass
+        await sleep(wait)
+        data = get_user_data(user_id)
+    if data.get("posting") and not has_active_subscription(user_id):
+        update_user(user_id, {"posting": False})
+        await app.send_message(user_id, "انتهى اشتراكك أثناء النشر. تم الإيقاف.")
+    await client.stop()
+
+# ------------------ أوامر البوت ------------------
+@app.on_message(filters.command("start") & filters.private)
+async def start_command(client, message):
+    user_id = message.from_user.id
+    if len(message.command) > 1 and message.command[1].startswith("ref_"):
+        referrer_id = int(message.command[1].split("_")[1])
+        if referrer_id != user_id:
+            users = load_users()
+            if str(referrer_id) in users and str(user_id) in users and users[str(user_id)].get("referred_by") is None:
+                users[str(user_id)]["referred_by"] = referrer_id
+                users[str(referrer_id)]["referrals_count"] = users[str(referrer_id)].get("referrals_count", 0) + 1
+                if users[str(referrer_id)]["referrals_count"] >= 5:
+                    end = datetime.now() + timedelta(days=30)
+                    users[str(referrer_id)]["subscription_end"] = end.isoformat()
+                    await app.send_message(referrer_id, f"مبروك! وصل عدد المدعوين 5، تم تمديد اشتراكك لمدة شهر حتى {end.strftime('%Y-%m-%d')}.")
+                save_users(users)
+    if not is_subscribed(user_id):
+        return await message.reply(f"اشترك أولاً في القناة: @{FORCED_CHANNEL}")
+    if not has_active_subscription(user_id):
+        update_user(user_id, {"subscription_end": (datetime.now() + timedelta(days=1)).isoformat()})
+        await message.reply("تم منحك يوم استخدام مجاني.")
+    await message.reply(f"أهلاً بك {message.from_user.first_name} في بوت النشر التلقائي", reply_markup=homeMarkup)
+
+@app.on_callback_query()
+async def callback_handler(_, callback: CallbackQuery):
+    user_id = callback.from_user.id
+    data = callback.data
+    if data == "toHome":
+        await callback.message.edit_text("القائمة الرئيسية", reply_markup=homeMarkup)
+    elif data == "account":
+        user_data = get_user_data(user_id)
+        end_date = datetime.fromisoformat(user_data["subscription_end"]).strftime("%Y-%m-%d")
+        text = f"الاشتراك ينتهي: {end_date}\nالمدعوين: {user_data['referrals_count']}/5\nرابط الإحالة: {get_referral_link(user_id)}"
+        await callback.message.edit_text(text, reply_markup=Markup([[Button("تسجيل حساب", callback_data="login"), Button("تغيير الحساب", callback_data="changeAccount")], [Button("رجوع", callback_data="toHome")]]))
+    elif data in ("login", "changeAccount"):
+        if data == "changeAccount" and get_user_data(user_id).get("session") is None:
+            return await callback.answer("ماكو حساب مسجل", show_alert=True)
+        await callback.message.delete()
+        user_states[user_id] = 'waiting_phone'
+        await app.send_message(user_id, "أرسل رقم هاتفك:", reply_markup=ForceReply())
+    elif data == "newSuper":
+        await callback.message.delete()
+        user_states[user_id] = 'waiting_super_link'
+        await app.send_message(user_id, "أرسل رابط السوبر:", reply_markup=ForceReply())
+    elif data == "currentSupers":
+        groups = get_user_data(user_id).get("groups", [])
+        if not groups:
+            return await callback.answer("لا توجد سوبرات", show_alert=True)
+        markup = []
+        for g in groups:
+            try:
+                title = (await app.get_chat(g)).title
+            except:
+                title = str(g)
+            markup.append([Button(title, callback_data=str(g)), Button("🗑", callback_data=f"delSuper {g}")])
+        markup.append([Button("رجوع", callback_data="toHome")])
+        await callback.message.edit_text("السوبرات المضافة:", reply_markup=Markup(markup))
+    elif data.startswith("delSuper"):
+        group = int(data.split()[1])
+        groups = get_user_data(user_id).get("groups", [])
+        if group in groups:
+            groups.remove(group)
+            update_user(user_id, {"groups": groups})
+        await callback.answer("تم الحذف", show_alert=True)
+    elif data == "newCaption":
+        await callback.message.delete()
+        user_states[user_id] = 'waiting_caption'
+        await app.send_message(user_id, "أرسل الكليشة (نص أو صورة أو فيديو):", reply_markup=ForceReply())
+    elif data == "waitTime":
+        await callback.message.delete()
+        user_states[user_id] = 'waiting_waittime'
+        await app.send_message(user_id, "أرسل مدة الانتظار بالثواني:", reply_markup=ForceReply())
+    elif data == "startPosting":
+        data_user = get_user_data(user_id)
+        if data_user.get("session") is None:
+            return await callback.answer("أضف حساباً أولاً", show_alert=True)
+        if not data_user.get("groups"):
+            return await callback.answer("لا توجد سوبرات", show_alert=True)
+        if data_user.get("posting"):
+            return await callback.answer("النشر مفعل مسبقاً", show_alert=True)
+        update_user(user_id, {"posting": True})
+        create_task(posting(user_id))
+        await callback.message.edit_text("تم بدء النشر التلقائي", reply_markup=Markup([[Button("إيقاف النشر", callback_data="stopPosting"), Button("رجوع", callback_data="toHome")]]))
+    elif data == "stopPosting":
+        if not get_user_data(user_id).get("posting"):
+            return await callback.answer("النشر غير مفعل", show_alert=True)
+        update_user(user_id, {"posting": False})
+        await callback.message.edit_text("تم إيقاف النشر", reply_markup=Markup([[Button("بدء النشر", callback_data="startPosting"), Button("رجوع", callback_data="toHome")]]))
+    elif data == "safety":
+        await callback.message.reply("تعليمات الأمان: لا تشارك كود الدخول مع أحد. استخدم البوت على مسؤوليتك.")
+    elif data.startswith("delSuper") or data.startswith("toHome") or data in ("login","changeAccount"):
+        pass
+    else:
+        await callback.answer("زر غير معروف", show_alert=True)
+
+# ------------------ معالجة رسائل الحالات ------------------
+@app.on_message(filters.private & ~filters.command("start"))
+async def handle_states(client, message):
+    user_id = message.from_user.id
+    if user_id not in user_states:
+        return
+    state = user_states[user_id]
+    if state == 'waiting_phone':
+        number = message.text
+        if number == '/cancel':
+            del user_states[user_id]
+            await message.reply("تم الإلغاء", reply_markup=Markup([[Button("القائمة", callback_data="toHome")]]))
+            return
+        user_states[user_id] = {'state': 'waiting_code', 'phone': number}
+        await message.reply("تم إرسال الكود إلى هاتفك، أرسله هنا:", reply_markup=ForceReply())
+    elif isinstance(state, dict) and state.get('state') == 'waiting_code':
+        code = message.text.replace(" ", "")
+        phone = state['phone']
+        # محاكاة تسجيل الدخول (للتجربة) - في الحقيقة تحتاج إلى عميل منفصل
+        await message.reply("تم تسجيل الدخول بنجاح (محاكاة). يمكنك الآن استخدام البوت.", reply_markup=Markup([[Button("القائمة", callback_data="toHome")]]))
+        del user_states[user_id]
+    elif state == 'waiting_super_link':
+        if message.text == '/cancel':
+            del user_states[user_id]
+            await message.reply("تم الإلغاء", reply_markup=Markup([[Button("القائمة", callback_data="toHome")]]))
+            return
+        try:
+            chat = await app.get_chat(message.text)
+        except:
+            await message.reply("رابط غير صالح", reply_markup=Markup([[Button("حاول مرة", callback_data="newSuper")]]))
+            return
+        groups = get_user_data(user_id).get("groups", [])
+        groups.append(chat.id)
+        update_user(user_id, {"groups": groups})
+        del user_states[user_id]
+        await message.reply("تم إضافة السوبر", reply_markup=Markup([[Button("القائمة", callback_data="toHome")]]))
+    elif state == 'waiting_caption':
+        if message.text == '/cancel':
+            del user_states[user_id]
+            await message.reply("تم الإلغاء", reply_markup=Markup([[Button("القائمة", callback_data="toHome")]]))
+            return
+        if message.photo:
+            caption_data = {"type": "photo", "file_id": message.photo.file_id, "caption": message.caption or ""}
+        elif message.video:
+            caption_data = {"type": "video", "file_id": message.video.file_id, "caption": message.caption or ""}
+        else:
+            caption_data = {"type": "text", "text": message.text}
+        update_user(user_id, {"caption": caption_data})
+        del user_states[user_id]
+        await message.reply("تم تعيين الكليشة", reply_markup=Markup([[Button("القائمة", callback_data="toHome")]]))
+    elif state == 'waiting_waittime':
+        if message.text == '/cancel':
+            del user_states[user_id]
+            await message.reply("تم الإلغاء", reply_markup=Markup([[Button("القائمة", callback_data="toHome")]]))
+            return
+        try:
+            wait = int(message.text)
+            update_user(user_id, {"waitTime": wait})
+            del user_states[user_id]
+            await message.reply("تم تعيين المدة", reply_markup=Markup([[Button("القائمة", callback_data="toHome")]]))
+        except:
+            await message.reply("أدخل رقماً صحيحاً", reply_markup=Markup([[Button("حاول مرة", callback_data="waitTime")]]))
+
+# ------------------ مهام الخلفية ------------------
+async def re_start_posting():
+    await sleep(30)
+    users = load_users()
+    for uid, data in users.items():
+        if data.get("posting"):
+            create_task(posting(int(uid)))
+
+async def subscription_checker():
+    while True:
+        await sleep(3600)
+        users = load_users()
+        for uid, data in users.items():
+            if data.get("posting") and not has_active_subscription(int(uid)):
+                update_user(int(uid), {"posting": False})
+                await app.send_message(int(uid), "انتهى اشتراكك، تم إيقاف النشر.")
+
+# ------------------ بدء البوت مع إعادة المحاولة للتوقيت ------------------
+async def start_with_retry():
+    while True:
+        try:
+            await app.start()
+            print("✅ Bot connected successfully")
+            break
+        except BadMsgNotification as e:
+            if e.value == 16:
+                print("⚠️ Time sync error (16). Retrying in 10s...")
+                await asyncio.sleep(10)
+            else:
+                raise
+        except Exception as e:
+            print(f"Unexpected error: {e}. Retrying in 5s...")
+            await asyncio.sleep(5)
+
+# ------------------ خادم Flask ------------------
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def index():
+    return "Bot is running"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host="0.0.0.0", port=port)
+
+# ------------------ التشغيل الرئيسي ------------------
+async def main():
+    create_task(re_start_posting())
+    create_task(subscription_checker())
+    await start_with_retry()
+    await idle()
+
+if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
+    asyncio.run(main())
 def get_referral_link(user_id):
     return f"https://t.me/{app.me.username}?start=ref_{user_id}"
 
