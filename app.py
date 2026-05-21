@@ -26,7 +26,7 @@ from flask import Flask
 # ------------------ قراءة المتغيرات البيئية (آمن) ------------------
 API_ID = int(os.getenv("API_ID", 0))
 API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8503926746:AAHoE25Y0mE7aLCuO1sUtw0xXF7TuiyPnno")
 
 if not API_ID or not API_HASH or not BOT_TOKEN:
     raise RuntimeError("API_ID, API_HASH, BOT_TOKEN must be set in environment variables")
