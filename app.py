@@ -34,12 +34,12 @@ import json
 # ------------------ إعدادات البوت ------------------
 app = Client(
     "autoPost",
-    api_id="29510141",
-    api_hash="14c074a5aed49dc7752a9f8d54cf4ad4",
-    bot_token="8666985104:AAEZ_NgKD3KaaYyt1WVM4ZgQ8CMZwmZGEqE"
+    api_id="33957094",
+    api_hash="35e04f65846f09700aac0696a59f1a37",
+    bot_token="8713124620:AAFQGCd4IhcKql1g1mKJXnF_ePHGh0npwLo"
 )
 user_states = {}
-owner = 8226014028  # ايديك
+owner = 7853478744  # ايديك
 
 # ------------------ الأزرار الرئيسية (عراقي + أيقونات) ------------------
 homeMarkup = Markup([
