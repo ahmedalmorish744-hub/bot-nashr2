@@ -462,7 +462,7 @@ async def safety_instructions(_, callback: CallbackQuery):
     await callback.message.reply(text)
 
 # ------------------ معالج الرسائل الخاصة ------------------
-@app.on_message(filters.private & ~filters.command())
+app.on_message(filters.private & ~filters.command(["start", "admin", "cancel"]))
 async def handle_private_messages(client, message):
     user_id = message.from_user.id
     if user_id not in user_states:
